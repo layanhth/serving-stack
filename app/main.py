@@ -18,7 +18,7 @@ import time
 import uuid
 
 import torch
-from fastapi import FastAPI
+from fastapi import FastAPI, Header, HTTPException
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
 from schemas import (
@@ -33,6 +33,11 @@ from schemas import (
 )
 
 MODEL_ID = os.environ.get("MODEL_ID", "Qwen/Qwen2.5-0.5B-Instruct")
+API_KEY = os.environ.get("API_KEY", "")
+MAX_TOKENS = int(os.environ.get("MAX_TOKENS", "256"))
+
+if not API_KEY:
+    print("WARNING: API_KEY is not set; /v1 endpoints are running open")
 
 app = FastAPI(title="serving-stack", version="wk2")
 
@@ -63,7 +68,7 @@ def health() -> HealthResponse:
 # GET /v1/models  -- TODO
 # ---------------------------------------------------------------------------
 @app.get("/v1/models", response_model=ModelList)
-def list_models() -> ModelList:
+def list_models(authorization: str | None = Header(default=None)) -> ModelList:
     """List the served model id(s).
 
     Contract (OpenAI-compatible):
@@ -75,6 +80,9 @@ def list_models() -> ModelList:
     Build a ModelList from schemas.py and return it. Use int(time.time()) for
     created.
     """
+
+    if API_KEY and authorization != f"Bearer {API_KEY}":
+        raise HTTPException(status_code=401, detail="Unauthorized")
     # TODO: return a ModelList whose single ModelCard.id == MODEL_ID
     return ModelList(
     data=[
@@ -90,7 +98,10 @@ def list_models() -> ModelList:
 # POST /v1/chat/completions  -- TODO (non-streaming first)
 # ---------------------------------------------------------------------------
 @app.post("/v1/chat/completions", response_model=ChatCompletionResponse)
-def chat_completions(req: ChatCompletionRequest) -> ChatCompletionResponse:
+def chat_completions(
+    req: ChatCompletionRequest,
+    authorization: str | None = Header(default=None),
+) -> ChatCompletionResponse:
     """Run the model over the messages and return an OpenAI-compatible completion.
 
     Contract (non-streaming, the week-2 target):
@@ -124,6 +135,13 @@ def chat_completions(req: ChatCompletionRequest) -> ChatCompletionResponse:
     Generation blocks the event loop this week. That is acceptable: week 3's
     engine owns concurrency. Name it, do not solve it here.
     """
+
+    if API_KEY and authorization != f"Bearer {API_KEY}":
+        raise HTTPException(status_code=401, detail="Unauthorized")
+
+    req.max_tokens = min(req.max_tokens, MAX_TOKENS)
+
+
     # TODO: implement non-streaming chat completion per the contract above
     input_ids = tokenizer.apply_chat_template(
     [m.model_dump() for m in req.messages],
